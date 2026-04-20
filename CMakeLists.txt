@@ -132,10 +132,63 @@ install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
 install(FILES   stream.sdp      DESTINATION share/${PROJECT_NAME})
 
 # ---------------------------------------------------------------------------
+# Optional: ROS2 headless publisher target
+#
+# Built only when ROS2 packages are found in the environment.
+# Source ROS2 before configuring:
+#   source /opt/ros/humble/setup.bash && cd build && cmake .. && make -j$(nproc)
+# ---------------------------------------------------------------------------
+find_package(ament_cmake QUIET)
+find_package(rclcpp      QUIET)
+find_package(sensor_msgs QUIET)
+
+if(rclcpp_FOUND AND sensor_msgs_FOUND)
+    set(ROS2_PUB_SOURCES
+        src/ros2/main_ros2.cpp
+        src/ros2/headless_decoder.cpp
+        src/ros2/ros2_publisher_node.cpp
+    )
+
+    add_executable(hm30_ros2_publisher ${ROS2_PUB_SOURCES})
+
+    target_include_directories(hm30_ros2_publisher PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/src/ros2"
+        "${CMAKE_BINARY_DIR}/generated"
+        ${AVFORMAT_INCLUDE_DIRS}
+        ${AVCODEC_INCLUDE_DIRS}
+        ${AVUTIL_INCLUDE_DIRS}
+        ${SWSCALE_INCLUDE_DIRS}
+    )
+
+    target_link_libraries(hm30_ros2_publisher PRIVATE
+        rclcpp::rclcpp
+        ${sensor_msgs_TARGETS}
+        ${AVFORMAT_LIBRARIES}
+        ${AVCODEC_LIBRARIES}
+        ${AVUTIL_LIBRARIES}
+        ${SWSCALE_LIBRARIES}
+        pthread
+    )
+
+    # Suppress the same deprecation warnings from FFmpeg headers.
+    target_compile_options(hm30_ros2_publisher PRIVATE
+        -Wall -Wextra -Wno-deprecated-declarations
+    )
+
+    install(TARGETS hm30_ros2_publisher RUNTIME DESTINATION bin)
+
+    message(STATUS "  ROS2 publisher : ENABLED  (topic /hm30/image_raw)")
+else()
+    message(STATUS "  ROS2 publisher : DISABLED (source /opt/ros/humble/setup.bash first)")
+endif()
+
+# ---------------------------------------------------------------------------
 # Build summary
 # ---------------------------------------------------------------------------
 message(STATUS "------------------------------------------------------------")
 message(STATUS "  Project  : ${PROJECT_NAME} v${PROJECT_VERSION}")
 message(STATUS "  Build    : ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Compiler : ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "  GUI app  : hm30_rtp_receiver")
 message(STATUS "------------------------------------------------------------")

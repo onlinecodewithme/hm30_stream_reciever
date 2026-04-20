@@ -267,8 +267,9 @@ void StreamDecoder::run()
                 const int w = frame->width;
                 const int h = frame->height;
 
-                // (Re)create the scaler if the resolution has changed.
-                if (w != m_width.load(std::memory_order_relaxed) ||
+                // (Re)create the scaler if it doesn't exist or the resolution has changed.
+                if (!m_swsCtx ||
+                    w != m_width.load(std::memory_order_relaxed) ||
                     h != m_height.load(std::memory_order_relaxed))
                 {
                     m_width.store(w,  std::memory_order_relaxed);
@@ -282,27 +283,29 @@ void StreamDecoder::run()
                         w, h, AV_PIX_FMT_RGB24,
                         AppConfig::kSwsAlgorithm, nullptr, nullptr, nullptr);
 
-                    qInfo() << "[StreamDecoder] Resolution changed to"
+                    qInfo() << "[StreamDecoder] Scaler initialized for"
                             << w << "x" << h;
                 }
 
-                // Convert YUV frame to RGB QImage in the back-buffer,
-                // then make a deep copy for the signal emission.
-                QImage finalImage;
-                {
-                    std::lock_guard<std::mutex> lock(m_bufMutex);
-                    if (m_backBuf.width() != w || m_backBuf.height() != h) {
-                        m_backBuf = QImage(w, h, QImage::Format_RGB888);
+                if (m_swsCtx) {
+                    // Convert YUV frame to RGB QImage in the back-buffer,
+                    // then make a deep copy for the signal emission.
+                    QImage finalImage;
+                    {
+                        std::lock_guard<std::mutex> lock(m_bufMutex);
+                        if (m_backBuf.width() != w || m_backBuf.height() != h) {
+                            m_backBuf = QImage(w, h, QImage::Format_RGB888);
+                        }
+                        uint8_t *dst[4]   = { m_backBuf.bits(), nullptr, nullptr, nullptr };
+                        int dstStride[4]  = { static_cast<int>(m_backBuf.bytesPerLine()), 0, 0, 0 };
+                        sws_scale(m_swsCtx,
+                                  frame->data, frame->linesize, 0, h,
+                                  dst, dstStride);
+                        finalImage = m_backBuf.copy();
                     }
-                    uint8_t *dst[4]   = { m_backBuf.bits(), nullptr, nullptr, nullptr };
-                    int dstStride[4]  = { static_cast<int>(m_backBuf.bytesPerLine()), 0, 0, 0 };
-                    sws_scale(m_swsCtx,
-                              frame->data, frame->linesize, 0, h,
-                              dst, dstStride);
-                    finalImage = m_backBuf.copy();
-                }
 
-                emit frameReady(std::move(finalImage));
+                    emit frameReady(std::move(finalImage));
+                }
 
                 // Update FPS counter once per second.
                 ++frameCount;
