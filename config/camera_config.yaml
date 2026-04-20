@@ -1,0 +1,73 @@
+# =============================================================================
+# camera_config.yaml
+# Camera intrinsics for the DJI Osmo Action 5 Pro mounted on the SIYI HM30.
+#
+# At 1280×720 resolution, standard video mode (≈73° horizontal FOV):
+#   fx = (width/2) / tan(hfov/2) = 640 / tan(36.5°) ≈ 863 px
+#   fy = (height/2) / tan(vfov/2) ≈ 863 px (assuming square pixels)
+#   cx = width  / 2 = 640
+#   cy = height / 2 = 360
+#
+# These are reasonable estimates for a 73° HFOV lens at 1280×720.
+# SLAM3R can work without these (it uses default/auto intrinsics internally),
+# but providing accurate values improves reconstruction quality.
+#
+# To calibrate precisely: use a checkerboard with OpenCV calibrateCamera().
+# =============================================================================
+
+camera:
+  # Frame resolution (must match what the HM30 stream delivers)
+  width:  1280
+  height: 720
+
+  # Focal lengths in pixels (fx ≈ fy for square pixels)
+  fx: 863.0
+  fy: 863.0
+
+  # Principal point (image center, in pixels)
+  cx: 640.0
+  cy: 360.0
+
+  # Lens distortion coefficients (k1, k2, p1, p2, k3)
+  # Set to zeros if unknown — SLAM3R handles moderate distortion.
+  distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+  # Horizontal field of view in degrees (informational)
+  hfov_deg: 73.0
+
+  # Camera model: "pinhole" (only supported type for SLAM3R)
+  model: pinhole
+
+# =============================================================================
+# SLAM3R reconstruction parameters
+# Tune these for your scene / performance requirements.
+# =============================================================================
+
+slam3r:
+  # Number of initial frames used to bootstrap the world coordinate frame.
+  # Higher = more robust initialization but longer startup lag.
+  initial_winsize: 5
+
+  # Frame stride for keyframe selection.
+  # 1 = every frame is a keyframe (slowest, most accurate)
+  # 3 = every 3rd frame (recommended for 25-30 FPS input)
+  keyframe_stride: 3
+
+  # Sliding window radius for local point-map estimation.
+  win_r: 3
+
+  # Number of scene frames retrieved from the buffer as global reference.
+  num_scene_frame: 10
+
+  # Maximum buffering set size (-1 = unlimited).
+  buffer_size: 100
+
+  # I2P confidence threshold (points below this are filtered out).
+  conf_threshold: 1.5
+
+  # Process every Nth incoming frame (reduces GPU load for high-FPS streams).
+  # frame_skip: 2 means use every 2nd frame arriving at the node.
+  frame_skip: 2
+
+  # Publish a new PointCloud2 message every N processed frames.
+  publish_every_n_frames: 5
