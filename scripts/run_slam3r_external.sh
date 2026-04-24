@@ -20,9 +20,8 @@ echo " FastDDS is configured to use zero-copy Shared Memory."
 echo " Ready to receive video and broadcast 3D maps!"
 echo "==========================================================="
 
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-export FASTRTPS_DEFAULT_PROFILES_FILE="$PROJECT_DIR/config/fastdds_shm.xml"
-export ROS_LOCALHOST_ONLY=1
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI=file:///home/xavier_ai/cyclonedds/cyclonedx.xml
 
 # Restrict PyTorch and NumPy thread usage so they don't consume 100% of all CPU cores.
 # This guarantees the C++ decoder thread will always have free CPU time to process UDP packets!

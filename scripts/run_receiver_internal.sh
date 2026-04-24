@@ -30,9 +30,8 @@ echo " FastDDS is configured to use zero-copy Shared Memory for"
 echo " the heavy 2D video payload. Network is clear!"
 echo "==========================================================="
 
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-export FASTRTPS_DEFAULT_PROFILES_FILE="$PROJECT_DIR/config/fastdds_shm.xml"
-export ROS_LOCALHOST_ONLY=1
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI=file:///home/xavier_ai/cyclonedds/cyclonedx.xml
 
 cd "$PROJECT_DIR"
 exec ./build/hm30_ros2_publisher "$@"
