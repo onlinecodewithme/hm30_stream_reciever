@@ -2,7 +2,6 @@
 
 #include <QThread>
 #include <QImage>
-#include <QTemporaryFile>
 
 #include <atomic>
 #include <array>
@@ -22,14 +21,14 @@ extern "C" {
  * @brief Asynchronous H.264 / RTP decode worker running on a dedicated QThread.
  *
  * StreamDecoder owns the entire FFmpeg pipeline:
- *   UDP socket → avformat (SDP/RTP demux) → avcodec (H.264) → sws_scale (YUV→RGB) → QImage
+ *   URL → avformat (demux) → avcodec (H.264) → sws_scale (YUV→RGB) → QImage
  *
  * Decoded frames are emitted via the Qt signal/slot mechanism (queued connection)
  * so that VideoWidget can safely repaint from the UI thread without any explicit
  * locking on the consumer side.
  *
  * ### Lifecycle
- * 1. Construct with desired port and SDP template path.
+ * 1. Construct with desired stream URL.
  * 2. Call `start()` — the thread begins and internally calls `openStream()`.
  * 3. If the stream drops, the worker reconnects automatically.
  * 4. Call `stop()` from any thread; the worker exits gracefully and this call blocks
@@ -47,14 +46,10 @@ class StreamDecoder : public QThread {
 public:
     /**
      * @brief Construct the decoder. Does not start the background thread.
-     * @param port            UDP port number to listen on.
-     * @param sdpTemplatePath Absolute path to the SDP template file.
-     *                        The port placeholder inside the file will be replaced
-     *                        at runtime and written to a temporary file.
+     * @param url             Stream URL (e.g. rtsp://... or udp://...).
      * @param parent          Optional Qt parent object.
      */
-    explicit StreamDecoder(int port, const QString &sdpTemplatePath,
-                           QObject *parent = nullptr);
+    explicit StreamDecoder(const QString &url, QObject *parent = nullptr);
 
     /** @brief Stops the decode thread if still running, then destroys the object. */
     ~StreamDecoder() override;
@@ -99,11 +94,7 @@ private:
     // Private helpers
     // -------------------------------------------------------------------------
 
-    /**
-     * @brief Builds the patched SDP content from the template, replacing the port.
-     * @return The ready-to-use SDP string, or an empty string on error.
-     */
-    [[nodiscard]] QString buildSdpContent() const;
+
 
     /**
      * @brief Opens the FFmpeg format/codec pipeline.
@@ -117,13 +108,11 @@ private:
     // -------------------------------------------------------------------------
     // Configuration (set at construction, read-only afterwards)
     // -------------------------------------------------------------------------
-    int     m_port;
-    QString m_sdpTemplatePath;
+    QString m_url;
 
     // -------------------------------------------------------------------------
     // Runtime state
     // -------------------------------------------------------------------------
-    QTemporaryFile          m_tempSdp;
     std::atomic<bool>       m_running{false};
     std::atomic<bool>       m_connected{false};
 

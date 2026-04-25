@@ -45,10 +45,10 @@ public slots:
     void setConnectionStatus(bool connected);
 
     /**
-     * @brief Informs the widget which UDP port is being watched.
+     * @brief Informs the widget which URL is being watched.
      *        Used purely for the "waiting" overlay text.
      */
-    void setPortInfo(int port);
+    void setUrlInfo(const QString &url);
 
 protected:
     /** @brief Qt paint event: renders either the live frame or the no-signal screen. */
@@ -68,5 +68,5 @@ private:
     // -------------------------------------------------------------------------
     QImage m_currentFrame;       ///< Last valid decoded frame. Null when disconnected.
     bool   m_connected{false};   ///< True while the stream is active.
-    int    m_port{5600};         ///< UDP port shown in the placeholder overlay.
+    QString m_url;               ///< URL shown in the placeholder overlay.
 };

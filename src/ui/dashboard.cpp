@@ -17,26 +17,20 @@
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
-Dashboard::Dashboard(int port, QWidget *parent)
+Dashboard::Dashboard(const QString &url, QWidget *parent)
     : QMainWindow(parent)
-    , m_port(port)
+    , m_url(url)
 {
-    setWindowTitle(QStringLiteral("%1 (port %2)")
+    setWindowTitle(QStringLiteral("%1 (%2)")
                    .arg(QLatin1String(AppConfig::kWindowTitle))
-                   .arg(m_port));
+                   .arg(m_url));
     setMinimumSize(AppConfig::kMinWindowWidth, AppConfig::kMinWindowHeight);
     showMaximized();
 
     buildUI();
 
-    // Resolve SDP file path: prefer the copy next to the binary, fall back one level up.
-    QString sdpPath = QCoreApplication::applicationDirPath() + "/stream.sdp";
-    if (!QFile::exists(sdpPath)) {
-        sdpPath = QCoreApplication::applicationDirPath() + "/../stream.sdp";
-    }
-
     // Instantiate and wire the decode worker.
-    m_decoder = new StreamDecoder(m_port, sdpPath, this);
+    m_decoder = new StreamDecoder(m_url, this);
     connect(m_decoder, &StreamDecoder::frameReady,
             m_video,   &VideoWidget::updateFrame);
     connect(m_decoder, &StreamDecoder::connectionChanged,
@@ -52,7 +46,7 @@ Dashboard::Dashboard(int port, QWidget *parent)
     // Start the asynchronous decode pipeline.
     m_decoder->start();
 
-    qInfo() << "[Dashboard] Initialized — listening on UDP port" << m_port;
+    qInfo() << "[Dashboard] Initialized — connecting to" << m_url;
 }
 
 Dashboard::~Dashboard()
@@ -79,7 +73,7 @@ void Dashboard::buildUI()
     mainLayout->addWidget(buildInfoPanel(),  /*stretch=*/1);
 
     statusBar()->showMessage(
-        QStringLiteral("SIYI HM30 RTP Receiver — Listening on UDP port %1...").arg(m_port));
+        QStringLiteral("SIYI HM30 RTP Receiver — Connecting to %1...").arg(m_url));
 }
 
 QWidget *Dashboard::buildVideoPanel()
@@ -97,7 +91,7 @@ QWidget *Dashboard::buildVideoPanel()
     m_videoLed->setFixedWidth(36);
     setLabelActive(m_videoLed, false);
 
-    m_videoStatusLabel = new QLabel(QStringLiteral("VIDEO — Waiting for RTP..."));
+    m_videoStatusLabel = new QLabel(QStringLiteral("VIDEO — Waiting for Stream..."));
     m_videoStatusLabel->setObjectName(QStringLiteral("videoStatusLabel"));
     setLabelActive(m_videoStatusLabel, false);
 
@@ -110,7 +104,7 @@ QWidget *Dashboard::buildVideoPanel()
     header->addWidget(m_fpsLabel);
 
     m_video = new VideoWidget(this);
-    m_video->setPortInfo(m_port);
+    m_video->setUrlInfo(m_url);
 
     layout->addLayout(header);
     layout->addWidget(m_video);
@@ -131,7 +125,7 @@ QWidget *Dashboard::buildInfoPanel()
     auto *connLayout = new QVBoxLayout(connGroup);
     connLayout->setSpacing(8);
     m_connLabel = new QLabel(
-        QStringLiteral("Video: Waiting for stream...\nMode: RTP/UDP Receiver\nPort: %1").arg(m_port));
+        QStringLiteral("Video: Waiting for stream...\nMode: FFmpeg Direct Decode\nURL: %1").arg(m_url));
     m_connLabel->setObjectName(QStringLiteral("connLabel"));
     m_connLabel->setWordWrap(true);
     connLayout->addWidget(m_connLabel);
@@ -143,7 +137,7 @@ QWidget *Dashboard::buildInfoPanel()
     perfLayout->setSpacing(8);
     auto *perfInfo = new QLabel(
         QStringLiteral("• Direct FFmpeg decode (no OpenCV)\n"
-                        "• Raw RTP/UDP (no RTSP overhead)\n"
+                        "• Direct Stream Transport\n"
                         "• Asynchronous QThread decoupling\n"
                         "• Signal/Slot queued delivery\n"
                         "• QPainter direct render"));
@@ -157,11 +151,11 @@ QWidget *Dashboard::buildInfoPanel()
     auto *streamLayout = new QVBoxLayout(streamGroup);
     streamLayout->setSpacing(8);
     auto *streamInfo = new QLabel(
-        QStringLiteral("Mode: RTP/UDP Receiver\n"
-                        "Listen Port: %1\n"
+        QStringLiteral("Mode: Stream Receiver\n"
+                        "URL: %1\n"
                         "Codec: H.264 (FFmpeg direct)\n"
                         "Source: DJI Osmo Action 5 Pro\n"
-                        "Link: Camera → HM30 Air → HM30 Ground → PC").arg(m_port));
+                        "Link: Camera → HM30 Air → HM30 Ground → PC").arg(m_url));
     streamInfo->setObjectName(QStringLiteral("streamInfo"));
     streamInfo->setWordWrap(true);
     streamLayout->addWidget(streamInfo);
@@ -204,24 +198,24 @@ void Dashboard::refreshStatus()
 
     if (live) {
         m_videoStatusLabel->setText(
-            QStringLiteral("VIDEO — %1×%2 LIVE (RTP)").arg(w).arg(h));
+            QStringLiteral("VIDEO — %1×%2 LIVE").arg(w).arg(h));
         m_fpsLabel->setText(
             QStringLiteral("%1 FPS").arg(fps, 0, 'f', 1));
         m_connLabel->setText(
             QStringLiteral("Video: ✅ Connected (%1×%2)\nFPS: %3\n"
-                            "Codec: H.264 (FFmpeg)\nTransport: RTP/UDP port %4")
-            .arg(w).arg(h).arg(fps, 0, 'f', 1).arg(m_port));
+                            "Codec: H.264 (FFmpeg)\nTransport: %4")
+            .arg(w).arg(h).arg(fps, 0, 'f', 1).arg(m_url));
         statusBar()->showMessage(
-            QStringLiteral("VID:✓  |  %1×%2 @ %3 FPS  |  RTP/UDP port %4  |  Direct FFmpeg")
-            .arg(w).arg(h).arg(fps, 0, 'f', 1).arg(m_port));
+            QStringLiteral("VID:✓  |  %1×%2 @ %3 FPS  |  %4  |  Direct FFmpeg")
+            .arg(w).arg(h).arg(fps, 0, 'f', 1).arg(m_url));
     } else {
         m_videoStatusLabel->setText(QStringLiteral("VIDEO — No Signal"));
         m_fpsLabel->clear();
         m_connLabel->setText(
-            QStringLiteral("Video: ❌ No stream\nListening on UDP port %1...\nWaiting for RTP packets")
-            .arg(m_port));
+            QStringLiteral("Video: ❌ No stream\nConnecting to %1...\nWaiting for frames")
+            .arg(m_url));
         statusBar()->showMessage(
-            QStringLiteral("VID:✗  |  Listening on UDP port %1...").arg(m_port));
+            QStringLiteral("VID:✗  |  Connecting to %1...").arg(m_url));
     }
 }
 

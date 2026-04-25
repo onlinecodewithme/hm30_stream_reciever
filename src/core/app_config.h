@@ -28,12 +28,8 @@ constexpr char kWindowTitle[] = "SIYI HM30 — RTP Receiver";
 // Network defaults
 // ---------------------------------------------------------------------------
 
-/// Default UDP port the receiver listens on. Overridable via --port flag.
-constexpr int kDefaultPort = 5600;
-
-/// Valid port range (inclusive).
-constexpr int kMinPort = 1;
-constexpr int kMaxPort = 65535;
+/// Default stream URL. Overridable via --url flag.
+constexpr char kDefaultUrl[] = "rtsp://192.168.144.25:8554/stream";
 
 // ---------------------------------------------------------------------------
 // UI / timing

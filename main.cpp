@@ -1,4 +1,6 @@
 #include <QApplication>
+#include <QCoreApplication>
+#include <QScopedPointer>
 #include <QCommandLineParser>
 #include <QCommandLineOption>
 #include <QDateTime>
@@ -9,6 +11,13 @@
 
 #include "src/core/app_config.h"
 #include "src/ui/dashboard.h"
+#include "src/core/stream_decoder.h"
+
+#ifdef WITH_ROS2
+#include "src/ros2/ros2_bridge.h"
+#include <rclcpp/rclcpp.hpp>
+#include <thread>
+#endif
 
 // ---------------------------------------------------------------------------
 // Structured logging — installed as the global Qt message handler.
@@ -46,9 +55,33 @@ int main(int argc, char *argv[])
     // Honour default SIGINT behaviour so Ctrl-C terminates the process.
     signal(SIGINT, SIG_DFL);
 
-    QApplication app(argc, argv);
-    app.setApplicationName(QLatin1String(AppConfig::kAppName));
-    app.setApplicationVersion(QLatin1String(AppConfig::kAppVersion));
+#ifdef WITH_ROS2
+    rclcpp::init(argc, argv);
+    auto rosNode = std::make_shared<rclcpp::Node>("hm30_receiver_node");
+    
+    // Run ROS spinner in a background thread so it doesn't block Qt
+    std::thread rosSpinner([rosNode]() {
+        rclcpp::spin(rosNode);
+    });
+#endif
+
+    bool isHeadless = false;
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--headless") == 0) {
+            isHeadless = true;
+            break;
+        }
+    }
+
+    QScopedPointer<QCoreApplication> app;
+    if (isHeadless) {
+        app.reset(new QCoreApplication(argc, argv));
+    } else {
+        app.reset(new QApplication(argc, argv));
+    }
+
+    app->setApplicationName(QLatin1String(AppConfig::kAppName));
+    app->setApplicationVersion(QLatin1String(AppConfig::kAppVersion));
 
     qInfo() << "=== SIYI HM30 RTP Receiver" << AppConfig::kAppVersion << "===";
 
@@ -59,38 +92,67 @@ int main(int argc, char *argv[])
     parser.addHelpOption();
     parser.addVersionOption();
 
-    const QCommandLineOption portOption(
-        {QStringLiteral("p"), QStringLiteral("port")},
-        QStringLiteral("UDP port to listen on (default: %1).").arg(AppConfig::kDefaultPort),
-        QStringLiteral("port"),
-        QString::number(AppConfig::kDefaultPort));
-    parser.addOption(portOption);
+    const QCommandLineOption urlOption(
+        {QStringLiteral("u"), QStringLiteral("url")},
+        QStringLiteral("Stream URL to connect to (default: %1).").arg(QLatin1String(AppConfig::kDefaultUrl)),
+        QStringLiteral("url"),
+        QLatin1String(AppConfig::kDefaultUrl));
+    parser.addOption(urlOption);
 
-    parser.process(app);
+    const QCommandLineOption headlessOption(
+        {QStringLiteral("headless")},
+        QStringLiteral("Run without the GUI (useful for ROS 2 background publisher)."));
+    parser.addOption(headlessOption);
 
-    bool ok = false;
-    const int port = parser.value(portOption).toInt(&ok);
-    if (!ok || port < AppConfig::kMinPort || port > AppConfig::kMaxPort) {
-        qCritical() << "Invalid port specified. Must be in range"
-                    << AppConfig::kMinPort << "-" << AppConfig::kMaxPort;
+    parser.process(*app);
+
+    const QString url = parser.value(urlOption);
+    if (url.isEmpty()) {
+        qCritical() << "Stream URL cannot be empty.";
         return 1;
     }
 
-    qInfo() << "Binding listener to UDP port" << port;
-
-    // -- Stylesheet loading (embedded Qt resource → self-contained binary) ----
-    QFile styleFile(QLatin1String(AppConfig::kStylesheetResource));
-    if (styleFile.open(QFile::ReadOnly)) {
-        app.setStyleSheet(QLatin1String(styleFile.readAll()));
-        styleFile.close();
-        qInfo() << "Stylesheet applied from Qt resource.";
-    } else {
-        qWarning() << "Failed to load stylesheet — dashboard may render unstyled.";
-    }
+    qInfo() << "Using stream URL:" << url;
 
     // -- Launch ---------------------------------------------------------------
-    Dashboard dashboard(port);
-    dashboard.show();
+    StreamDecoder* decoder = nullptr;
+    Dashboard* dashboard = nullptr;
 
-    return app.exec();
+    if (isHeadless) {
+        qInfo() << "Running in HEADLESS mode.";
+        decoder = new StreamDecoder(url);
+        decoder->start();
+    } else {
+        // -- Stylesheet loading (embedded Qt resource) ------------------------
+        QFile styleFile(QLatin1String(AppConfig::kStylesheetResource));
+        if (styleFile.open(QFile::ReadOnly)) {
+            static_cast<QApplication*>(app.data())->setStyleSheet(QLatin1String(styleFile.readAll()));
+            styleFile.close();
+            qInfo() << "Stylesheet applied from Qt resource.";
+        } else {
+            qWarning() << "Failed to load stylesheet — dashboard may render unstyled.";
+        }
+
+        dashboard = new Dashboard(url);
+        dashboard->show();
+        decoder = dashboard->decoder();
+    }
+
+#ifdef WITH_ROS2
+    // Wire decoder directly to ROS Bridge
+    Ros2Bridge rosBridge(rosNode);
+    QObject::connect(decoder, &StreamDecoder::frameReady,
+                     &rosBridge, &Ros2Bridge::onFrameReady);
+#endif
+
+    int ret = app->exec();
+
+#ifdef WITH_ROS2
+    rclcpp::shutdown();
+    if (rosSpinner.joinable()) {
+        rosSpinner.join();
+    }
+#endif
+
+    return ret;
 }

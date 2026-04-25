@@ -6,6 +6,8 @@
 #include <QFile>
 #include <QTextStream>
 #include <QRegularExpression>
+#include <QCoreApplication>
+#include <QUrl>
 
 #include <chrono>
 #include <array>
@@ -14,13 +16,10 @@
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
-StreamDecoder::StreamDecoder(int port, const QString &sdpTemplatePath,
-                             QObject *parent)
+StreamDecoder::StreamDecoder(const QString &url, QObject *parent)
     : QThread(parent)
-    , m_port(port)
-    , m_sdpTemplatePath(sdpTemplatePath)
+    , m_url(url)
 {
-    m_tempSdp.setFileTemplate(QDir::tempPath() + "/hm30_rtp_XXXXXX.sdp");
 }
 
 StreamDecoder::~StreamDecoder()
@@ -42,43 +41,9 @@ void StreamDecoder::stop()
 // Private helpers
 // ---------------------------------------------------------------------------
 
-QString StreamDecoder::buildSdpContent() const
-{
-    QFile sdpFile(m_sdpTemplatePath);
-    if (!sdpFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        qWarning() << "[StreamDecoder] Cannot open SDP template:" << m_sdpTemplatePath;
-        return {};
-    }
-
-    QString content = QTextStream(&sdpFile).readAll();
-    sdpFile.close();
-
-    // Patch the port number in the m=video line.
-    content.replace(QRegularExpression(R"(m=video\s+\d+)"),
-                    QStringLiteral("m=video %1").arg(m_port));
-    return content;
-}
-
 bool StreamDecoder::openStream()
 {
-    // -- Build and write the patched SDP to a temporary file ------------------
-    const QString sdpContent = buildSdpContent();
-    if (sdpContent.isEmpty()) {
-        return false;
-    }
-
-    if (!m_tempSdp.open()) {
-        qWarning() << "[StreamDecoder] Cannot create temporary SDP file.";
-        return false;
-    }
-    {
-        QTextStream out(&m_tempSdp);
-        out << sdpContent;
-        m_tempSdp.flush();
-    }
-
-    qInfo().nospace() << "[StreamDecoder] Opening RTP stream — port " << m_port
-                      << " via " << m_tempSdp.fileName();
+    qInfo().nospace() << "[StreamDecoder] Opening stream — " << m_url;
 
     // -- Allocate format context ----------------------------------------------
     m_fmtCtx = avformat_alloc_context();
@@ -89,33 +54,50 @@ bool StreamDecoder::openStream()
 
     // -- Low-latency AVDictionary options -------------------------------------
     AVDictionary *opts = nullptr;
-    av_dict_set(&opts, "protocol_whitelist", "file,udp,rtp", 0);
+    av_dict_set(&opts, "protocol_whitelist", "file,udp,rtp,tcp,rtsp", 0);
     av_dict_set(&opts, "fflags",             "nobuffer",      0);
     av_dict_set(&opts, "flags",              "low_delay",     0);
     av_dict_set(&opts, "framedrop",          "1",             0);
     av_dict_set(&opts, "max_delay",          "0",             0);
     av_dict_set(&opts, "reorder_queue_size", "0",             0);
-    
-    // Request a 10MB UDP socket buffer from the OS to prevent packet drops during CPU spikes
+    av_dict_set(&opts, "rtsp_transport", "tcp", 0); // Optional, but usually more reliable
+    // Request a 10MB socket buffer from the OS to prevent packet drops during CPU spikes
     av_dict_set(&opts, "buffer_size",        "10485760",      0);
     av_dict_set(&opts, "fifo_size",          "10485760",      0);
 
-    // -- Find SDP demuxer -----------------------------------------------------
-    const AVInputFormat *sdpFmt = av_find_input_format("sdp");
-    if (!sdpFmt) {
-        qWarning() << "[StreamDecoder] SDP input format unavailable in this FFmpeg build.";
-        avformat_free_context(m_fmtCtx);
-        m_fmtCtx = nullptr;
-        av_dict_free(&opts);
-        return false;
+    QString inputUrl = m_url;
+    if (m_url.startsWith(QLatin1String("udp://"), Qt::CaseInsensitive) || 
+        m_url.startsWith(QLatin1String("rtp://"), Qt::CaseInsensitive)) {
+        QUrl url(m_url);
+        int port = url.port();
+        if (port == -1) {
+            port = 5600;
+        }
+
+        QString sdpPath = QCoreApplication::applicationDirPath() + QLatin1String("/stream.sdp");
+        QFile file(sdpPath);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream out(&file);
+            out << "v=0\n";
+            out << "o=- 0 0 IN IP4 127.0.0.1\n";
+            out << "s=No Name\n";
+            out << "c=IN IP4 0.0.0.0\n";
+            out << "t=0 0\n";
+            out << "a=tool:libavformat 58.76.100\n";
+            out << "m=video " << port << " RTP/AVP 96\n";
+            out << "a=rtpmap:96 H264/90000\n";
+            out << "a=fmtp:96 packetization-mode=1\n";
+            file.close();
+            inputUrl = sdpPath;
+            qInfo() << "[StreamDecoder] Generated SDP for raw RTP on port" << port;
+        } else {
+            qWarning() << "[StreamDecoder] Failed to write SDP file at" << sdpPath;
+        }
     }
 
-    // -- Open the stream ------------------------------------------------------
-    // ff_const59 evaluates to 'const' on FFmpeg ≥ 5.x but is empty on 4.x,
-    // so we const_cast to satisfy the older ABI without breaking newer builds.
     int ret = avformat_open_input(&m_fmtCtx,
-                                  m_tempSdp.fileName().toUtf8().constData(),
-                                  const_cast<AVInputFormat *>(sdpFmt), &opts);
+                                  inputUrl.toUtf8().constData(),
+                                  nullptr, &opts);
     av_dict_free(&opts);
 
     if (ret < 0) {
@@ -124,7 +106,6 @@ bool StreamDecoder::openStream()
         qWarning() << "[StreamDecoder] avformat_open_input failed:" << errBuf.data();
         avformat_free_context(m_fmtCtx);
         m_fmtCtx = nullptr;
-        m_tempSdp.close();
         return false;
     }
 
@@ -142,7 +123,7 @@ bool StreamDecoder::openStream()
         }
     }
     if (m_videoStreamIdx < 0) {
-        qWarning() << "[StreamDecoder] No video stream found in SDP.";
+        qWarning() << "[StreamDecoder] No video stream found in the stream.";
         closeStream();
         return false;
     }
@@ -206,7 +187,6 @@ void StreamDecoder::closeStream()
     }
 
     m_videoStreamIdx = -1;
-    m_tempSdp.close();
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +196,7 @@ void StreamDecoder::closeStream()
 void StreamDecoder::run()
 {
     m_running.store(true, std::memory_order_release);
-    qInfo() << "[StreamDecoder] Decode thread started — UDP port" << m_port;
+    qInfo() << "[StreamDecoder] Decode thread started —" << m_url;
 
     while (m_running.load(std::memory_order_acquire)) {
 

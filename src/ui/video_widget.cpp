@@ -11,7 +11,7 @@
 
 VideoWidget::VideoWidget(QWidget *parent)
     : QWidget(parent)
-    , m_port(AppConfig::kDefaultPort)
+    , m_url(AppConfig::kDefaultUrl)
 {
     setMinimumSize(AppConfig::kMinVideoWidth, AppConfig::kMinVideoHeight);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
@@ -38,9 +38,9 @@ void VideoWidget::setConnectionStatus(bool connected)
     update();
 }
 
-void VideoWidget::setPortInfo(int port)
+void VideoWidget::setUrlInfo(const QString &url)
 {
-    m_port = port;
+    m_url = url;
     update();
 }
 
@@ -94,7 +94,7 @@ void VideoWidget::paintNoSignal(QPainter &p, int w, int h) const
     titleFont.setWeight(QFont::Bold);
     p.setFont(titleFont);
     p.setPen(QColor(60, 60, 80));
-    p.drawText(QRect(0, 0, w, h), Qt::AlignCenter, QStringLiteral("WAITING FOR RTP STREAM"));
+    p.drawText(QRect(0, 0, w, h), Qt::AlignCenter, QStringLiteral("WAITING FOR STREAM"));
 
     // Sub-text with port info.
     QFont subFont = titleFont;
@@ -103,5 +103,5 @@ void VideoWidget::paintNoSignal(QPainter &p, int w, int h) const
     p.setFont(subFont);
     p.setPen(QColor(40, 40, 60));
     p.drawText(QRect(0, h / 2 + 20, w, 30), Qt::AlignCenter,
-               QStringLiteral("Listening on UDP port %1...").arg(m_port));
+               QStringLiteral("Connecting to %1...").arg(m_url));
 }

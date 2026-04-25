@@ -132,9 +132,8 @@ install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
 install(FILES   stream.sdp      DESTINATION share/${PROJECT_NAME})
 
 # ---------------------------------------------------------------------------
-# Optional: ROS2 headless publisher target
+# Optional: ROS2 integration
 #
-# Built only when ROS2 packages are found in the environment.
 # Source ROS2 before configuring:
 #   source /opt/ros/humble/setup.bash && cd build && cmake .. && make -j$(nproc)
 # ---------------------------------------------------------------------------
@@ -143,44 +142,25 @@ find_package(rclcpp      QUIET)
 find_package(sensor_msgs QUIET)
 
 if(rclcpp_FOUND AND sensor_msgs_FOUND)
-    set(ROS2_PUB_SOURCES
-        src/ros2/main_ros2.cpp
-        src/ros2/headless_decoder.cpp
-        src/ros2/ros2_publisher_node.cpp
+    target_sources(${PROJECT_NAME} PRIVATE 
+        src/ros2/ros2_bridge.cpp 
+        src/ros2/ros2_bridge.h
     )
 
-    add_executable(hm30_ros2_publisher ${ROS2_PUB_SOURCES})
-
-    target_include_directories(hm30_ros2_publisher PRIVATE
-        "${CMAKE_SOURCE_DIR}"
+    target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_ROS2)
+    
+    target_include_directories(${PROJECT_NAME} PRIVATE
         "${CMAKE_SOURCE_DIR}/src/ros2"
-        "${CMAKE_BINARY_DIR}/generated"
-        ${AVFORMAT_INCLUDE_DIRS}
-        ${AVCODEC_INCLUDE_DIRS}
-        ${AVUTIL_INCLUDE_DIRS}
-        ${SWSCALE_INCLUDE_DIRS}
     )
 
-    target_link_libraries(hm30_ros2_publisher PRIVATE
+    target_link_libraries(${PROJECT_NAME} PRIVATE
         rclcpp::rclcpp
         ${sensor_msgs_TARGETS}
-        ${AVFORMAT_LIBRARIES}
-        ${AVCODEC_LIBRARIES}
-        ${AVUTIL_LIBRARIES}
-        ${SWSCALE_LIBRARIES}
-        pthread
     )
 
-    # Suppress the same deprecation warnings from FFmpeg headers.
-    target_compile_options(hm30_ros2_publisher PRIVATE
-        -Wall -Wextra -Wno-deprecated-declarations
-    )
-
-    install(TARGETS hm30_ros2_publisher RUNTIME DESTINATION bin)
-
-    message(STATUS "  ROS2 publisher : ENABLED  (topic /hm30/image_raw)")
+    message(STATUS "  ROS2 integration : ENABLED  (topic /hm30/image_raw)")
 else()
-    message(STATUS "  ROS2 publisher : DISABLED (source /opt/ros/humble/setup.bash first)")
+    message(STATUS "  ROS2 integration : DISABLED (source /opt/ros/humble/setup.bash first)")
 endif()
 
 # ---------------------------------------------------------------------------

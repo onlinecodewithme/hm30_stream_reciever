@@ -39,13 +39,16 @@ class Dashboard : public QMainWindow {
 public:
     /**
      * @brief Constructs the dashboard and starts the decode worker.
-     * @param port   UDP port the receiver will listen on.
+     * @param url    Stream URL the receiver will connect to.
      * @param parent Optional Qt parent widget.
      */
-    explicit Dashboard(int port = 5600, QWidget *parent = nullptr);
+    explicit Dashboard(const QString &url, QWidget *parent = nullptr);
 
     /** @brief Stops the decode worker cleanly before destruction. */
     ~Dashboard() override;
+
+    /** @brief Expose the stream decoder for external signal connections (e.g. ROS 2 bridge). */
+    StreamDecoder* decoder() const { return m_decoder; }
 
 private slots:
     /**
@@ -91,7 +94,7 @@ private:
     // -------------------------------------------------------------------------
     VideoWidget   *m_video{nullptr};    ///< Video canvas.
     StreamDecoder *m_decoder{nullptr};  ///< Background decode worker.
-    int            m_port;              ///< UDP listen port (set at construction).
+    QString        m_url;               ///< Stream URL (set at construction).
 
     // -------------------------------------------------------------------------
     // Status / info panel widgets
