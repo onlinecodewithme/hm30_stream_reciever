@@ -2,6 +2,7 @@
 #include <iostream>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMetaObject>
 #include <geometry_msgs/msg/point.hpp>
 #include <std_msgs/msg/float32.hpp>
 
@@ -41,6 +42,20 @@ void RosBackend::setNode(std::shared_ptr<rclcpp::Node> node)
         m_cmdVelTimer = new QTimer(this);
         connect(m_cmdVelTimer, &QTimer::timeout, this, &RosBackend::publishCmdVel);
         m_cmdVelTimer->start(100); // 10Hz continuous publish
+
+        // Map & Odometry
+        m_mapSub = m_node->create_subscription<nav_msgs::msg::OccupancyGrid>(
+            "/global_traversability_map", rclcpp::QoS(rclcpp::KeepLast(5)).reliable().durability_volatile(),
+            std::bind(&RosBackend::mapCallback, this, std::placeholders::_1));
+            
+        m_mapUpdateSub = m_node->create_subscription<map_msgs::msg::OccupancyGridUpdate>(
+            "/global_traversability_map_updates", 10,
+            std::bind(&RosBackend::mapUpdateCallback, this, std::placeholders::_1));
+            
+        m_odomSub = m_node->create_subscription<nav_msgs::msg::Odometry>(
+            "/Odometry",
+            rclcpp::QoS(rclcpp::KeepLast(5)).reliable().durability_volatile(),
+            std::bind(&RosBackend::odomCallback, this, std::placeholders::_1));
     }
 }
 
@@ -306,4 +321,123 @@ void RosBackend::cancelTakeoff()
             std::cout << "Drone pad close command failed: " << result->message << std::endl;
         }
     });
+}
+
+void RosBackend::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
+{
+    m_gridWidth = msg->info.width;
+    m_gridHeight = msg->info.height;
+    m_mapResolution = msg->info.resolution;
+    m_mapOriginX = msg->info.origin.position.x;
+    m_mapOriginY = msg->info.origin.position.y;
+
+    m_gridDataRaw.assign(msg->data.begin(), msg->data.end());
+    
+    QVariantList newGrid;
+    newGrid.reserve(m_gridDataRaw.size());
+    for (int8_t v : m_gridDataRaw) {
+        newGrid.append(v);
+    }
+    m_gridDataQ = newGrid;
+
+    if (!m_usingLiveData) {
+        m_usingLiveData = true;
+        emit usingLiveDataChanged();
+    }
+    emit gridWidthChanged();
+    emit gridHeightChanged();
+    emit gridDataChanged();
+    
+    computeMapBounds();
+}
+
+void RosBackend::mapUpdateCallback(const map_msgs::msg::OccupancyGridUpdate::SharedPtr msg)
+{
+    if (m_gridWidth == 0 || m_gridHeight == 0 || m_gridDataRaw.empty()) {
+        return; // Wait for full map first
+    }
+    
+    int start_x = msg->x;
+    int start_y = msg->y;
+    int update_w = msg->width;
+    int update_h = msg->height;
+
+    // Update raw array
+    for (int ry = 0; ry < update_h; ++ry) {
+        for (int rx = 0; rx < update_w; ++rx) {
+            int map_x = start_x + rx;
+            int map_y = start_y + ry;
+            if (map_x >= 0 && map_x < m_gridWidth && map_y >= 0 && map_y < m_gridHeight) {
+                int map_idx = map_y * m_gridWidth + map_x;
+                int update_idx = ry * update_w + rx;
+                m_gridDataRaw[map_idx] = msg->data[update_idx];
+                m_gridDataQ[map_idx] = msg->data[update_idx]; // Update QVariantList directly
+            }
+        }
+    }
+    
+    emit gridDataChanged();
+    computeMapBounds();
+}
+
+void RosBackend::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
+{
+    double world_x = msg->pose.pose.position.x;
+    double world_y = msg->pose.pose.position.y;
+
+    // Extract Yaw from Quaternion
+    double qx = msg->pose.pose.orientation.x;
+    double qy = msg->pose.pose.orientation.y;
+    double qz = msg->pose.pose.orientation.z;
+    double qw = msg->pose.pose.orientation.w;
+    double siny_cosp = 2 * (qw * qz + qx * qy);
+    double cosy_cosp = 1 - 2 * (qy * qy + qz * qz);
+    double yaw = std::atan2(siny_cosp, cosy_cosp);
+
+    // Convert world coordinates to grid coordinates (if map is loaded)
+    double gridX, gridY;
+    if (m_gridWidth > 0 && m_mapResolution > 0.0) {
+        gridX = (world_x - m_mapOriginX) / m_mapResolution;
+        gridY = (world_y - m_mapOriginY) / m_mapResolution;
+    } else {
+        // No map yet — store raw world coords; QML won't show until map arrives
+        gridX = world_x;
+        gridY = world_y;
+    }
+
+    // Marshal property changes to Qt main thread safely
+    QMetaObject::invokeMethod(this, [this, gridX, gridY, yaw]() {
+        m_robotX = gridX;
+        m_robotY = gridY;
+        m_robotAngle = yaw;
+        emit robotXChanged();
+        emit robotYChanged();
+        emit robotAngleChanged();
+    }, Qt::QueuedConnection);
+}
+
+void RosBackend::computeMapBounds() {
+    int minX = m_gridWidth;
+    int minY = m_gridHeight;
+    int maxX = -1;
+    int maxY = -1;
+    for (int y = 0; y < m_gridHeight; ++y) {
+        for (int x = 0; x < m_gridWidth; ++x) {
+            if (m_gridDataRaw[y * m_gridWidth + x] != -1) {
+                if (x < minX) minX = x;
+                if (y < minY) minY = y;
+                if (x > maxX) maxX = x;
+                if (y > maxY) maxY = y;
+            }
+        }
+    }
+    if (maxX >= minX && maxY >= minY) {
+        if (m_mapMinX != minX || m_mapMinY != minY || m_mapMaxX != maxX || m_mapMaxY != maxY) {
+            m_mapMinX = minX;
+            m_mapMinY = minY;
+            m_mapMaxX = maxX;
+            m_mapMaxY = maxY;
+            emit mapBoundsChanged();
+        }
+    }
 }

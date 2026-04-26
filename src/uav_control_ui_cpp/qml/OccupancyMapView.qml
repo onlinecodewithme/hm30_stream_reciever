@@ -27,6 +27,24 @@ Rectangle {
     property real robotX:      40   // grid column
     property real robotY:      30   // grid row
     property real robotAngle:  0.0  // radians
+    property int  mapMinX: 0
+    property int  mapMinY: 0
+    property int  mapMaxX: 80
+    property int  mapMaxY: 60
+
+    // ── Interaction & Smoothing ──────────────────────────────────────────────
+    property real zoomScale: 1.0
+    property real panOffsetX: 0.0
+    property real panOffsetY: 0.0
+
+    property real sRobotX: usingLiveData ? robotX : _rx
+    Behavior on sRobotX { NumberAnimation { duration: 150 } }
+    
+    property real sRobotY: usingLiveData ? robotY : _ry
+    Behavior on sRobotY { NumberAnimation { duration: 150 } }
+    
+    property real sRobotAngle: usingLiveData ? robotAngle : _ra
+    Behavior on sRobotAngle { NumberAnimation { duration: 150 } }
 
     // ── Internal: animated robot wander for sample mode ──────────────────────
     property real _rx: 40
@@ -114,6 +132,34 @@ Rectangle {
         canvas.requestPaint()
     }
 
+    // ── Interaction ───────────────────────────────────────────────────────────
+    MouseArea {
+        anchors.fill: parent
+        property real lastX: 0
+        property real lastY: 0
+        
+        onWheel: {
+            var zoomFactor = 1.1;
+            if (wheel.angleDelta.y > 0) mapView.zoomScale *= zoomFactor;
+            else if (wheel.angleDelta.y < 0) mapView.zoomScale /= zoomFactor;
+            
+            if (mapView.zoomScale < 0.1) mapView.zoomScale = 0.1;
+            if (mapView.zoomScale > 10.0) mapView.zoomScale = 10.0;
+        }
+        
+        onPressed: {
+            lastX = mouse.x;
+            lastY = mouse.y;
+        }
+        
+        onPositionChanged: {
+            mapView.panOffsetX += (mouse.x - lastX);
+            mapView.panOffsetY += (mouse.y - lastY);
+            lastX = mouse.x;
+            lastY = mouse.y;
+        }
+    }
+
     // ── Canvas ────────────────────────────────────────────────────────────────
     Canvas {
         id: canvas
@@ -121,6 +167,7 @@ Rectangle {
 
         onPaint: {
             var ctx = getContext("2d")
+            ctx.reset() // Reset transform matrix
             ctx.clearRect(0, 0, width, height)
 
             // Background
@@ -132,63 +179,75 @@ Rectangle {
             var data = mapView.usingLiveData ? mapView.gridData : mapView.sampleGrid
             if (!data || data.length === 0) return
 
-            // Cell size to fit canvas
-            var cs = Math.min(width / W, height / H)
-            var offX = (width  - cs * W) * 0.5
-            var offY = (height - cs * H) * 0.5
+            // Cell size to fit canvas based on known bounds
+            var effMinX = mapView.usingLiveData ? mapView.mapMinX : 0;
+            var effMinY = mapView.usingLiveData ? mapView.mapMinY : 0;
+            var effMaxX = mapView.usingLiveData ? mapView.mapMaxX : W - 1;
+            var effMaxY = mapView.usingLiveData ? mapView.mapMaxY : H - 1;
+            
+            // Fallback if empty
+            if (effMaxX < effMinX || effMaxY < effMinY) {
+                effMinX = 0; effMinY = 0; effMaxX = W - 1; effMaxY = H - 1;
+            }
+            
+            // Add padding
+            effMinX = Math.max(0, effMinX - 5);
+            effMinY = Math.max(0, effMinY - 5);
+            effMaxX = Math.min(W - 1, effMaxX + 5);
+            effMaxY = Math.min(H - 1, effMaxY + 5);
+            
+            var viewW = effMaxX - effMinX + 1;
+            var viewH = effMaxY - effMinY + 1;
 
-            // Draw grid cells
-            for (var ry = 0; ry < H; ry++) {
-                for (var rx = 0; rx < W; rx++) {
+            var baseCs = Math.min(width / viewW, height / viewH)
+            
+            // Ego-Centric Transformation
+            var cx = width / 2;
+            var cy = height / 2;
+            
+            ctx.save()
+            // 1. Move to screen center
+            ctx.translate(cx + mapView.panOffsetX, cy + mapView.panOffsetY)
+            // 2. Scale (with horizontal mirror to correct map orientation)
+            ctx.scale(-mapView.zoomScale, mapView.zoomScale)
+            // 3. Rotate so robot faces UP (0 is right, -PI/2 is up)
+            ctx.rotate(-mapView.sRobotAngle - Math.PI/2)
+            // 4. Translate map so robot is at 0,0
+            ctx.translate(-mapView.sRobotX * baseCs, -mapView.sRobotY * baseCs)
+
+            // Draw grid cells within the view
+            for (var ry = effMinY; ry <= effMaxY; ry++) {
+                for (var rx = effMinX; rx <= effMaxX; rx++) {
                     var v = data[ry * W + rx]
-                    if      (v === -1)  ctx.fillStyle = "#1A1D26"   // unknown — dark grey
+                    if      (v === -1)  continue;   // skip drawing unknown space
                     else if (v === 0)   ctx.fillStyle = "#D8DCE8"   // free — light
                     else if (v === 100) ctx.fillStyle = "#1C2030"   // occupied — near black
                     else {
-                        // Partial occupancy (0-100)
                         var t = v / 100.0
                         var grey = Math.round(220 - t * 200)
                         ctx.fillStyle = "rgb(" + grey + "," + grey + "," + grey + ")"
                     }
-                    ctx.fillRect(offX + rx*cs, offY + ry*cs, cs + 0.5, cs + 0.5)
-                }
-            }
-
-            // Grid overlay (only if cells are large enough)
-            if (cs >= 5) {
-                ctx.strokeStyle = "rgba(0,0,0,0.12)"
-                ctx.lineWidth = 0.3
-                for (var gx = 0; gx <= W; gx++) {
-                    ctx.beginPath()
-                    ctx.moveTo(offX + gx*cs, offY)
-                    ctx.lineTo(offX + gx*cs, offY + H*cs)
-                    ctx.stroke()
-                }
-                for (var gy = 0; gy <= H; gy++) {
-                    ctx.beginPath()
-                    ctx.moveTo(offX,        offY + gy*cs)
-                    ctx.lineTo(offX + W*cs, offY + gy*cs)
-                    ctx.stroke()
+                    var drawX = rx * baseCs;
+                    var drawY = ry * baseCs;
+                    ctx.fillRect(drawX, drawY, baseCs + 0.5, baseCs + 0.5)
                 }
             }
 
             // ── Robot marker ─────────────────────────────────────────────────
-            var rx2  = mapView.usingLiveData ? mapView.robotX : mapView._rx
-            var ry2  = mapView.usingLiveData ? mapView.robotY : mapView._ry
-            var ra   = mapView.usingLiveData ? mapView.robotAngle : mapView._ra
-            var rsx  = offX + rx2 * cs
-            var rsy  = offY + ry2 * cs
-            var rr   = cs * 2.2
+            // In this transformed space, the robot is always drawn at its grid coordinate.
+            var rCanvasX = mapView.sRobotX * baseCs;
+            var rCanvasY = mapView.sRobotY * baseCs;
+            var rr = baseCs * 2.2;
 
             // Shadow
             ctx.beginPath()
-            ctx.arc(rsx, rsy, rr + 2, 0, Math.PI*2)
+            ctx.arc(rCanvasX, rCanvasY, rr + 2, 0, Math.PI*2)
             ctx.fillStyle = "rgba(0,0,0,0.4)"
             ctx.fill()
 
             // Body
             ctx.beginPath()
-            ctx.arc(rsx, rsy, rr, 0, Math.PI*2)
+            ctx.arc(rCanvasX, rCanvasY, rr, 0, Math.PI*2)
             ctx.fillStyle = "#E74C3C"
             ctx.fill()
             ctx.strokeStyle = "#FF8C00"; ctx.lineWidth = 1.5
@@ -196,50 +255,53 @@ Rectangle {
 
             // Heading arrow
             ctx.beginPath()
-            ctx.moveTo(rsx, rsy)
-            ctx.lineTo(rsx + Math.cos(ra)*rr*1.7, rsy + Math.sin(ra)*rr*1.7)
+            ctx.moveTo(rCanvasX, rCanvasY)
+            ctx.lineTo(rCanvasX + Math.cos(mapView.sRobotAngle)*rr*1.7, rCanvasY + Math.sin(mapView.sRobotAngle)*rr*1.7)
             ctx.strokeStyle = "white"; ctx.lineWidth = 1.5
             ctx.stroke()
 
             // Scan circle
             ctx.beginPath()
-            ctx.arc(rsx, rsy, rr * 4.5, 0, Math.PI*2)
+            ctx.arc(rCanvasX, rCanvasY, rr * 4.5, 0, Math.PI*2)
             ctx.strokeStyle = "rgba(231,76,60,0.18)"; ctx.lineWidth = 0.8
             ctx.stroke()
+            
+            ctx.restore()
         }
     }
 
-    // ── Wander timer (sample mode only) ──────────────────────────────────────
+    // ── Wander timer (sample mode + 30fps UI loop) ───────────────────────────
     Timer {
-        interval: 80
+        interval: 33
         running:  true
         repeat:   true
         onTriggered: {
-            if (mapView.usingLiveData) return
+            if (!mapView.usingLiveData) {
+                mapView._rx += mapView._rvx
+                mapView._ry += mapView._rvy
 
-            mapView._rx += mapView._rvx
-            mapView._ry += mapView._rvy
+                // Bounce off grid bounds
+                if (mapView._rx < 5  || mapView._rx > mapView.gridWidth  - 5) mapView._rvx *= -1
+                if (mapView._ry < 5  || mapView._ry > mapView.gridHeight - 5) mapView._rvy *= -1
 
-            // Bounce off grid bounds and avoid walls
-            if (mapView._rx < 5  || mapView._rx > mapView.gridWidth  - 5) mapView._rvx *= -1
-            if (mapView._ry < 5  || mapView._ry > mapView.gridHeight - 5) mapView._rvy *= -1
+                // Slightly vary angle from velocity
+                mapView._ra = Math.atan2(mapView._rvy, mapView._rvx)
 
-            // Slightly vary angle from velocity
-            mapView._ra = Math.atan2(mapView._rvy, mapView._rvx)
-
-            // Slow wander perturbation
-            mapView._rvx += (Math.random()-0.5)*0.015
-            mapView._rvy += (Math.random()-0.5)*0.015
-            // Clamp speed
-            var sp = Math.sqrt(mapView._rvx*mapView._rvx + mapView._rvy*mapView._rvy)
-            if (sp > 0.25) { mapView._rvx /= sp; mapView._rvy /= sp; mapView._rvx *= 0.25; mapView._rvy *= 0.25 }
-
+                // Slow wander perturbation
+                mapView._rvx += (Math.random()-0.5)*0.015
+                mapView._rvy += (Math.random()-0.5)*0.015
+                // Clamp speed
+                var sp = Math.sqrt(mapView._rvx*mapView._rvx + mapView._rvy*mapView._rvy)
+                if (sp > 0.25) { mapView._rvx /= sp; mapView._rvy /= sp; mapView._rvx *= 0.25; mapView._rvy *= 0.25 }
+            }
+            // Always repaint (live updates need this too)
             canvas.requestPaint()
         }
     }
 
-    // ── Data source badge ─────────────────────────────────────────────────────
+    // ── Data source badge & Recenter Button ──────────────────────────────────
     Row {
+        id: badgeRow
         anchors.bottom: parent.bottom; anchors.right: parent.right
         anchors.margins: 10; spacing: 5
         Rectangle {
@@ -250,6 +312,26 @@ Rectangle {
         Text {
             text: mapView.usingLiveData ? "Live /map" : "Sample Data"
             color: "#888"; font.pixelSize: 10
+        }
+    }
+
+    Rectangle {
+        width: 80; height: 26; radius: 13
+        anchors.bottom: badgeRow.top; anchors.right: parent.right
+        anchors.margins: 10
+        color: "#252B3B"
+        border.color: "#3A4055"
+        visible: mapView.panOffsetX !== 0 || mapView.panOffsetY !== 0 || mapView.zoomScale !== 1.0
+        
+        Text { anchors.centerIn: parent; text: "Recenter"; color: "white"; font.pixelSize: 12 }
+        
+        MouseArea {
+            anchors.fill: parent
+            onClicked: {
+                mapView.panOffsetX = 0
+                mapView.panOffsetY = 0
+                mapView.zoomScale = 1.0
+            }
         }
     }
 }

@@ -174,7 +174,17 @@ Item {
                     OccupancyMapView {
                         id: occupancyMapView
                         anchors.fill: parent
-                        // usingLiveData / gridData / robotX / robotY / robotAngle set from RosBackend
+                        usingLiveData: rosBackend.usingLiveData
+                        gridData: rosBackend.gridData
+                        gridWidth: rosBackend.gridWidth
+                        gridHeight: rosBackend.gridHeight
+                        robotX: rosBackend.robotX
+                        robotY: rosBackend.robotY
+                        robotAngle: rosBackend.robotAngle
+                        mapMinX: rosBackend.mapMinX
+                        mapMinY: rosBackend.mapMinY
+                        mapMaxX: rosBackend.mapMaxX
+                        mapMaxY: rosBackend.mapMaxY
                     }
 
                     Rectangle {

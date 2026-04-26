@@ -10,8 +10,12 @@
 #include <std_msgs/msg/float32.hpp>
 #include <geometry_msgs/msg/point.hpp>
 #include <geometry_msgs/msg/twist.hpp>
+#include <nav_msgs/msg/occupancy_grid.hpp>
+#include <nav_msgs/msg/odometry.hpp>
+#include <map_msgs/msg/occupancy_grid_update.hpp>
 #include <cognition_brain_interfaces/srv/drone_pad_control.hpp>
 #include <QTimer>
+#include <QVariantList>
 
 class RosBackend : public QObject
 {
@@ -30,6 +34,19 @@ class RosBackend : public QObject
     Q_PROPERTY(double angularSpeed READ angularSpeed NOTIFY angularSpeedChanged)
     Q_PROPERTY(QString padStatus READ padStatus NOTIFY padStatusChanged)
     Q_PROPERTY(bool mainCameraOn READ mainCameraOn WRITE setMainCameraOn NOTIFY mainCameraOnChanged)
+
+    Q_PROPERTY(QVariantList gridData READ gridData NOTIFY gridDataChanged)
+    Q_PROPERTY(int gridWidth READ gridWidth NOTIFY gridWidthChanged)
+    Q_PROPERTY(int gridHeight READ gridHeight NOTIFY gridHeightChanged)
+    Q_PROPERTY(double robotX READ robotX NOTIFY robotXChanged)
+    Q_PROPERTY(double robotY READ robotY NOTIFY robotYChanged)
+    Q_PROPERTY(double robotAngle READ robotAngle NOTIFY robotAngleChanged)
+    Q_PROPERTY(bool usingLiveData READ usingLiveData NOTIFY usingLiveDataChanged)
+
+    Q_PROPERTY(int mapMinX READ mapMinX NOTIFY mapBoundsChanged)
+    Q_PROPERTY(int mapMinY READ mapMinY NOTIFY mapBoundsChanged)
+    Q_PROPERTY(int mapMaxX READ mapMaxX NOTIFY mapBoundsChanged)
+    Q_PROPERTY(int mapMaxY READ mapMaxY NOTIFY mapBoundsChanged)
 
 public:
     explicit RosBackend(QObject *parent = nullptr);
@@ -51,6 +68,19 @@ public:
     double angularSpeed() const { return m_angularSpeed; }
     QString padStatus() const { return m_padStatus; }
     bool mainCameraOn() const { return m_mainCameraOn; }
+
+    QVariantList gridData() const { return m_gridDataQ; }
+    int gridWidth() const { return m_gridWidth; }
+    int gridHeight() const { return m_gridHeight; }
+    double robotX() const { return m_robotX; }
+    double robotY() const { return m_robotY; }
+    double robotAngle() const { return m_robotAngle; }
+    bool usingLiveData() const { return m_usingLiveData; }
+
+    int mapMinX() const { return m_mapMinX; }
+    int mapMinY() const { return m_mapMinY; }
+    int mapMaxX() const { return m_mapMaxX; }
+    int mapMaxY() const { return m_mapMaxY; }
 
 public slots:
     void setIsAuto(bool isAuto);
@@ -83,6 +113,15 @@ signals:
     void angularSpeedChanged();
     void padStatusChanged();
     void mainCameraOnChanged();
+    
+    void gridDataChanged();
+    void gridWidthChanged();
+    void gridHeightChanged();
+    void robotXChanged();
+    void robotYChanged();
+    void robotAngleChanged();
+    void usingLiveDataChanged();
+    void mapBoundsChanged();
 
 private slots:
     void publishCmdVel();
@@ -125,6 +164,33 @@ private:
     // Twist / Navigation Control
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr m_cmdVelPub;
     QTimer* m_cmdVelTimer = nullptr;
+
+    // Map & Odometry
+    QVariantList m_gridDataQ;
+    std::vector<int8_t> m_gridDataRaw;
+    int m_gridWidth = 0;
+    int m_gridHeight = 0;
+    double m_mapResolution = 0.05;
+    double m_mapOriginX = 0.0;
+    double m_mapOriginY = 0.0;
+    double m_robotX = 0.0;
+    double m_robotY = 0.0;
+    double m_robotAngle = 0.0;
+    bool m_usingLiveData = false;
+
+    int m_mapMinX = 0;
+    int m_mapMinY = 0;
+    int m_mapMaxX = 0;
+    int m_mapMaxY = 0;
+    void computeMapBounds();
+
+    rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr m_mapSub;
+    rclcpp::Subscription<map_msgs::msg::OccupancyGridUpdate>::SharedPtr m_mapUpdateSub;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr m_odomSub;
+
+    void mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg);
+    void mapUpdateCallback(const map_msgs::msg::OccupancyGridUpdate::SharedPtr msg);
+    void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
 };
 
 #endif // ROS_BACKEND_H
