@@ -140,88 +140,134 @@ Item {
                     }
                 }
 
-                // 3D Point Cloud Map Placeholder
+                // 3D Point Cloud
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    color: "#161925" // dark blueish
+                    color: "#0A0E1A"
                     radius: 12
-                    border.color: "#222"
+                    border.color: "#1A1F2E"
                     clip: true
 
-                    Image {
+                    PointCloudView {
+                        id: pointCloudView
                         anchors.fill: parent
-                        source: "qrc:/assets/images/3d_point_cloud_mock.png"
-                        fillMode: Image.PreserveAspectCrop
-                        opacity: 0.8
+                        // usingLiveData / externalPoints set from RosBackend when topic arrives
                     }
 
-                    Text {
-                        anchors.centerIn: parent
-                        text: "3D Point Cloud Map\n(Mock Data)"
-                        color: "white"
-                        font.pixelSize: 16
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        style: Text.Outline
-                        styleColor: "black"
-                    }
-
-                    // Top Left Button
                     Rectangle {
-                        width: 140; height: 30; radius: 8; color: "#222"
+                        width: 140; height: 30; radius: 8; color: Qt.rgba(0,0,0,0.55)
                         anchors.top: parent.top; anchors.left: parent.left; anchors.margins: 15
-                        Text { text: "👁 View Fullscreen"; color: "white"; font.pixelSize: 12; anchors.centerIn: parent }
+                        Text { text: "👁 3D Point Cloud"; color: "white"; font.pixelSize: 12; anchors.centerIn: parent }
                     }
                 }
 
-                // 2D Occupancy Map Placeholder
+                // 2D Occupancy Map
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    color: "#161925" // dark blueish
+                    color: "#080C14"
                     radius: 12
-                    border.color: "#222"
+                    border.color: "#1A1F2E"
                     clip: true
 
-                    Image {
+                    OccupancyMapView {
+                        id: occupancyMapView
                         anchors.fill: parent
-                        source: "qrc:/assets/images/2d_occupancy_map_mock.png"
-                        fillMode: Image.PreserveAspectCrop
-                        opacity: 0.8
+                        // usingLiveData / gridData / robotX / robotY / robotAngle set from RosBackend
                     }
 
-                    Text {
-                        anchors.centerIn: parent
-                        text: "2D Occupancy Map\n(Mock Data)"
-                        color: "white"
-                        font.pixelSize: 16
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        style: Text.Outline
-                        styleColor: "black"
-                    }
-
-                    // Top Left Button
                     Rectangle {
-                        width: 140; height: 30; radius: 8; color: "#222"
+                        width: 140; height: 30; radius: 8; color: Qt.rgba(0,0,0,0.55)
                         anchors.top: parent.top; anchors.left: parent.left; anchors.margins: 15
-                        Text { text: "🗺 View Fullscreen"; color: "white"; font.pixelSize: 12; anchors.centerIn: parent }
+                        Text { text: "🗺 2D Occupancy Map"; color: "white"; font.pixelSize: 12; anchors.centerIn: parent }
                     }
                 }
 
                 // Telemetry Panel
                 Rectangle {
+                    id: telemetryPanel
                     Layout.preferredWidth: 350
                     Layout.fillHeight: true
                     color: "#1C1E24"
                     radius: 12
 
+                    // ── BMS Live Data Properties ──────────────────────
+                    property real bms_soc: 0
+                    property real bms_current: 0
+                    property real bms_voltage: 0
+                    property real bms_power: 0
+                    property real bms_temp: 0
+                    property real bms_cell_avg: 0
+                    property string bms_health: "--"
+                    property string bms_lastUpdate: "--"
+                    property bool bms_connected: false
+                    property bool bms_fetching: false
+
+                    // Animated display values (smooth interpolation)
+                    property real disp_soc: 0
+                    property real disp_current: 0
+                    property real disp_voltage: 0
+                    property real disp_power: 0
+                    property real disp_temp: 0
+
+                    Behavior on disp_soc     { NumberAnimation { duration: 800; easing.type: Easing.OutCubic } }
+                    Behavior on disp_current { NumberAnimation { duration: 800; easing.type: Easing.OutCubic } }
+                    Behavior on disp_voltage { NumberAnimation { duration: 800; easing.type: Easing.OutCubic } }
+                    Behavior on disp_power   { NumberAnimation { duration: 800; easing.type: Easing.OutCubic } }
+                    Behavior on disp_temp    { NumberAnimation { duration: 800; easing.type: Easing.OutCubic } }
+
+                    // ── Polling Timer ─────────────────────────────────
+                    Timer {
+                        id: bmsTimer
+                        interval: 1000
+                        running: true
+                        repeat: true
+                        onTriggered: {
+                            if (telemetryPanel.bms_fetching) return;
+                            telemetryPanel.bms_fetching = true;
+                            var xhr = new XMLHttpRequest();
+                            xhr.open("GET", "http://192.168.1.186:5000/bms/summary", true);
+                            xhr.timeout = 900;
+                            xhr.onreadystatechange = function() {
+                                if (xhr.readyState !== XMLHttpRequest.DONE) return;
+                                telemetryPanel.bms_fetching = false;
+                                if (xhr.status === 200) {
+                                    try {
+                                        var d = JSON.parse(xhr.responseText);
+                                        telemetryPanel.bms_soc      = d.soc     || 0;
+                                        telemetryPanel.bms_current  = d.current || 0;
+                                        telemetryPanel.bms_voltage  = d.pack_voltage || 0;
+                                        telemetryPanel.bms_power    = d.power   || 0;
+                                        telemetryPanel.bms_temp     = (d.temperature_statistics && d.temperature_statistics.avg_temperature) || 0;
+                                        telemetryPanel.bms_cell_avg = (d.cell_statistics && d.cell_statistics.avg_voltage) || 0;
+                                        telemetryPanel.bms_health   = (d.battery_health && d.battery_health.overall_status) || "--";
+                                        telemetryPanel.bms_connected = d.connected || false;
+                                        // Animate to new values
+                                        telemetryPanel.disp_soc     = telemetryPanel.bms_soc;
+                                        telemetryPanel.disp_current = Math.abs(telemetryPanel.bms_current);
+                                        telemetryPanel.disp_voltage = telemetryPanel.bms_voltage;
+                                        telemetryPanel.disp_power   = Math.abs(telemetryPanel.bms_power);
+                                        telemetryPanel.disp_temp    = telemetryPanel.bms_temp;
+                                        var now = new Date();
+                                        telemetryPanel.bms_lastUpdate = now.getHours() + ":" +
+                                            (now.getMinutes()<10?"0":"") + now.getMinutes() + ":" +
+                                            (now.getSeconds()<10?"0":"") + now.getSeconds();
+                                    } catch(e) { telemetryPanel.bms_connected = false; }
+                                } else {
+                                    telemetryPanel.bms_connected = false;
+                                }
+                            };
+                            xhr.send();
+                        }
+                    }
+
                     Column {
                         anchors.fill: parent
                         anchors.margins: 20
-                        spacing: 15
+                        spacing: 14
 
+                        // Header
                         RowLayout {
                             width: parent.width
                             Column {
@@ -234,25 +280,87 @@ Item {
 
                         Rectangle { width: parent.width; height: 1; color: "#333" }
 
-                        TelemetryRow { icon: "🔋"; label: "Battery Charge"; subLabel: "Current"; val1: "93.5%"; val2: "-1.5A"; color1: "#2ECC71"; color2: "#888" }
+                        // Battery SOC + Current
+                        TelemetryRow {
+                            icon: "🔋"
+                            label: "Battery Charge"
+                            subLabel: "Current"
+                            val1: telemetryPanel.disp_soc.toFixed(1) + "%"
+                            val2: (telemetryPanel.bms_current < 0 ? "-" : "+") + telemetryPanel.disp_current.toFixed(1) + "A"
+                            color1: telemetryPanel.disp_soc > 50 ? "#2ECC71" : (telemetryPanel.disp_soc > 20 ? "#F39C12" : "#E74C3C")
+                            color2: "#888"
+                        }
                         Rectangle { width: parent.width; height: 1; color: "#333" }
-                        
-                        TelemetryRow { icon: "💻"; label: "CPU Utilization"; subLabel: "Memory usage"; val1: "62.5%"; val2: "66.1%"; color1: "#2ECC71"; color2: "#2ECC71" }
-                        Rectangle { width: parent.width; height: 1; color: "#333" }
-                        
-                        TelemetryRow { icon: "🌡"; label: "Temperature"; subLabel: "CPU Temperature"; val1: "55.5°C"; val2: "55.5°C"; color1: "#F39C12"; color2: "#F39C12" }
-                        Rectangle { width: parent.width; height: 1; color: "#333" }
-                        
-                        TelemetryRow { icon: "⏱"; label: "Speed"; subLabel: "Max Rec. Speed"; val1: "0.0 km/h"; val2: "N/A"; color1: "#2ECC71"; color2: "#888" }
-                        Rectangle { width: parent.width; height: 1; color: "#333" }
-                        
-                        TelemetryRow { icon: "⌛"; label: "Running Duration"; subLabel: ""; val1: "0.0 Mts"; val2: ""; color1: "#2ECC71"; color2: "transparent" }
 
-                        Item { height: 10 }
+                        // Pack Voltage + Power
+                        TelemetryRow {
+                            icon: "⚡"
+                            label: "Pack Voltage"
+                            subLabel: "Power Draw"
+                            val1: telemetryPanel.disp_voltage.toFixed(1) + "V"
+                            val2: telemetryPanel.disp_power.toFixed(1) + "W"
+                            color1: "#F4D03F"
+                            color2: "#888"
+                        }
+                        Rectangle { width: parent.width; height: 1; color: "#333" }
+
+                        // Temperature
+                        TelemetryRow {
+                            icon: "🌡"
+                            label: "Battery Temp"
+                            subLabel: "Avg cell voltage"
+                            val1: telemetryPanel.disp_temp.toFixed(1) + "°C"
+                            val2: telemetryPanel.bms_cell_avg.toFixed(3) + "V"
+                            color1: telemetryPanel.disp_temp < 40 ? "#2ECC71" : (telemetryPanel.disp_temp < 55 ? "#F39C12" : "#E74C3C")
+                            color2: "#888"
+                        }
+                        Rectangle { width: parent.width; height: 1; color: "#333" }
+
+                        // Health status
+                        TelemetryRow {
+                            icon: "💊"
+                            label: "Battery Health"
+                            subLabel: ""
+                            val1: telemetryPanel.bms_health.replace(/_/g, " ")
+                            val2: ""
+                            color1: telemetryPanel.bms_health === "good" ? "#2ECC71" : "#F39C12"
+                            color2: "transparent"
+                        }
+                        Rectangle { width: parent.width; height: 1; color: "#333" }
+
+                        // Speed row (static for now)
+                        TelemetryRow { icon: "⏱"; label: "Speed"; subLabel: "Max Rec. Speed"; val1: "0.0 km/h"; val2: "N/A"; color1: "#2ECC71"; color2: "#888" }
+
+                        Item { height: 4 }
+
+                        // Footer: last update + connection dot
                         RowLayout {
                             width: parent.width
-                            Text { text: "Last Updated: Just now"; color: "#666"; font.pixelSize: 10; Layout.alignment: Qt.AlignLeft }
-                            Text { text: "• ROS2 Live"; color: "#2ECC71"; font.pixelSize: 10; Layout.alignment: Qt.AlignRight }
+                            Text {
+                                text: "BMS " + (telemetryPanel.bms_lastUpdate !== "--" ? "@ " + telemetryPanel.bms_lastUpdate : "connecting…")
+                                color: "#666"; font.pixelSize: 10; Layout.alignment: Qt.AlignLeft
+                            }
+                            Row {
+                                Layout.alignment: Qt.AlignRight
+                                spacing: 4
+                                Rectangle {
+                                    width: 7; height: 7; radius: 4
+                                    color: telemetryPanel.bms_connected ? "#2ECC71" : "#E74C3C"
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    // Pulse animation when connected
+                                    SequentialAnimation on opacity {
+                                        running: telemetryPanel.bms_connected
+                                        loops: Animation.Infinite
+                                        NumberAnimation { to: 0.3; duration: 600; easing.type: Easing.InOutSine }
+                                        NumberAnimation { to: 1.0; duration: 600; easing.type: Easing.InOutSine }
+                                    }
+                                }
+                                Text {
+                                    text: telemetryPanel.bms_connected ? "BMS Live" : "BMS Offline"
+                                    color: telemetryPanel.bms_connected ? "#2ECC71" : "#E74C3C"
+                                    font.pixelSize: 10
+                                }
+                            }
                         }
                     }
                 }
